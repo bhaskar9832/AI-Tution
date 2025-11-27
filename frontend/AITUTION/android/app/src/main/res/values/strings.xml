@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">studyAi</string>
+    <string name="title_activity_main">studyAi</string>
+    <string name="package_name">com.massrecruiter.studyai</string>
+    <string name="custom_url_scheme">com.massrecruiter.studyai</string>
+</resources>

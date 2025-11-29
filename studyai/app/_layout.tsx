@@ -37,6 +37,8 @@ export default function RootLayout() {
         <Stack.Screen name="ask" options={{ title: "Ask Questions" }} />
         <Stack.Screen name="videos" options={{ title: "Recommended Videos" }} />
         <Stack.Screen name="mindmap" options={{ title: "Mind Map" }} />
+        <Stack.Screen name="mock-test" options={{ title: "Mock Test" }} />
+
       </Stack>
     </StudyProvider>
   );

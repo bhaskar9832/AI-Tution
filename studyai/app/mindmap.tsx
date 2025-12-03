@@ -15,7 +15,7 @@ import {
   Pressable,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { useStudy, MINDMAP_URL } from "./StudyContext";
+import { useStudy, MINDMAP_URL } from "../StudyContext";
 
 type PropsWithChildren = { children: React.ReactNode };
 

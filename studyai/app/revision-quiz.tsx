@@ -1,4 +1,4 @@
-// app/quiz.tsx
+// app/revision-quiz.tsx
 import React, { useState } from "react";
 import {
   SafeAreaView,
@@ -8,6 +8,7 @@ import {
   Pressable,
   StyleSheet,
   ViewStyle,
+  Alert,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useStudy, QUIZ_PERFORMANCE_URL } from "../StudyContext";
@@ -22,71 +23,75 @@ function Card({
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
-export default function QuizScreen() {
+export default function RevisionQuizScreen() {
   const { apiData, user } = useStudy();
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [score, setScore] = useState<number>(0);
 
+  // submit/sync state
   const [saving, setSaving] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastSavedScore, setLastSavedScore] = useState<number | null>(null);
 
   if (!apiData) return messageScreen("No study data yet. Upload a PDF.");
-  const quiz = apiData.quiz || [];
-  if (!quiz.length) return messageScreen("No quiz questions generated.");
+  const allQuiz = (apiData as any).quiz || [];
+  if (!allQuiz.length) return messageScreen("No quiz questions generated.");
 
   const materialId = (apiData as any)?.material_id || null;
   const quizStats = (apiData as any)?.quiz_stats || null;
   const perQuestionStats =
     (quizStats && (quizStats as any).per_question) || {};
 
-  // ---------- helper to compute score ----------
-  const calculateScore = (currentAnswers: Record<number, string>) => {
-    return quiz.reduce((acc: number, q: any, idx: number) => {
-      return currentAnswers[idx] === q.answer ? acc + 1 : acc;
-    }, 0);
-  };
+  // --------- Build list of "revision" questions from stats ----------
+  const revisionIndices: number[] = [];
+  allQuiz.forEach((q: any, idx: number) => {
+    const statsForQ = perQuestionStats[String(idx)];
+    if (!statsForQ) return;
 
-  /**
-   * Submit full attempt to backend:
-   * - all answers
-   * - server computes stats + last_unsolved
-   */
-  const syncPerformance = async (
-    newAnswers: Record<number, string>,
-    finalScore: number
-  ) => {
-    if (!user?.id || !materialId) return;
+    const attempts = statsForQ.attempts ?? 0;
+    const correct = statsForQ.correct ?? 0;
 
-    // convert {0: "opt"} to {"0": "opt or null"}
+    if (attempts === 0) return; // never attempted yet → not revision
+
+    const accuracy = attempts > 0 ? correct / attempts : 0;
+    const needsRevision =
+      (attempts >= 1 && correct === 0) || (attempts >= 3 && accuracy < 0.5);
+
+    if (needsRevision && idx >= 0 && idx < allQuiz.length) {
+      revisionIndices.push(idx);
+    }
+  });
+
+  const revisionQuiz = revisionIndices.map((i) => allQuiz[i]);
+
+  if (!revisionQuiz.length) {
+    return messageScreen(
+      "No revision questions right now — you're doing well on all attempted questions!"
+    );
+  }
+
+  // ---------- Submit performance ONLY when user taps button ----------
+  const submitPerformance = async () => {
+    if (!user?.id || !materialId) {
+      Alert.alert("Not saved", "Login or material info missing.");
+      return;
+    }
+
+    if (!Object.keys(answers).length) {
+      Alert.alert("No answers", "Answer at least one question before submitting.");
+      return;
+    }
+
+    // convert {3: "A"} -> {"3": "A"}
     const answersPayload: Record<string, string | null> = {};
-    quiz.forEach((q: any, idx: number) => {
-      const sel = newAnswers[idx];
-      answersPayload[String(idx)] = sel ?? null;
+    Object.entries(answers).forEach(([k, v]) => {
+      answersPayload[String(k)] = v ?? null;
     });
-
-    // list of questions not solved (wrong or not answered)
-    const unsolvedQuestions = quiz
-      .map((q: any, idx: number) => {
-        const sel = newAnswers[idx];
-        if (!sel || sel !== q.answer) {
-          return {
-            index: idx,
-            question: q.question,
-            correct_answer: q.answer,
-            selected_answer: sel ?? null,
-            options: q.options || [],
-          };
-        }
-        return null;
-      })
-      .filter(Boolean);
 
     const payload = {
       user_id: user.id,
       material_id: materialId,
       answers: answersPayload,
-      unsolved_questions: unsolvedQuestions,
     };
 
     try {
@@ -99,56 +104,60 @@ export default function QuizScreen() {
         body: JSON.stringify(payload),
       });
 
-      if (!resp.ok) {
-        const text = await resp.text();
-        console.log("quiz_performance error:", resp.status, text);
-        setSyncError("Sync failed");
+      const text = await resp.text();
+      let json: any = null;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        console.log("revision quiz_performance non-JSON:", text);
+      }
+
+      if (!resp.ok || (json && json.error)) {
+        console.log(
+          "revision quiz_performance error:",
+          resp.status,
+          json || text
+        );
+        setSyncError("Submit failed");
+        Alert.alert("Error", "Could not submit revision quiz.");
         return;
       }
 
-      const json = await resp.json();
-      console.log("quiz_performance saved:", json);
-      setLastSavedScore(finalScore);
-      // If you want, you could also merge json.quiz_stats back into context.
+      console.log("revision quiz_performance saved:", json);
+      setLastSavedScore(score);
+      Alert.alert("Submitted", "Your revision quiz has been saved.");
     } catch (err: any) {
-      console.log("quiz_performance request error:", err);
-      setSyncError("Sync error");
+      console.log("revision quiz_performance request error:", err);
+      setSyncError("Submit error");
+      Alert.alert("Error", "Network error while submitting.");
     } finally {
       setSaving(false);
     }
   };
 
-  // -------- answer selection (no network here) --------
-  const selectOption = (qIdx: number, opt: string) => {
-    const newAnswers = { ...answers, [qIdx]: opt };
+  // ---------- Local tap handler: ONLY updates state + local score ----------
+  const selectOption = (revisionIdx: number, opt: string) => {
+    const originalIdx = revisionIndices[revisionIdx];
+    const newAnswers = { ...answers, [originalIdx]: opt };
     setAnswers(newAnswers);
 
-    // update score locally for UI
-    const newScore = calculateScore(newAnswers);
+    // recompute score only over revision questions
+    const newScore = revisionIndices.reduce((acc, origIdx) => {
+      const userAns = newAnswers[origIdx];
+      const q = allQuiz[origIdx];
+      if (userAns && userAns === q.answer) return acc + 1;
+      return acc;
+    }, 0);
     setScore(newScore);
   };
 
-  // -------- submit button handler --------
-  const submitQuiz = () => {
-    if (!user?.id || !materialId) return;
-    if (!Object.keys(answers).length) return;
-
-    const finalScore = calculateScore(answers);
-    setScore(finalScore);
-    syncPerformance(answers, finalScore);
-  };
-
   const syncStatusLabel = () => {
-    if (!user?.id || !materialId) return "Not synced (no user / material)";
-    if (saving) return "Saving...";
+    if (!user?.id || !materialId) return "Not logged in / no material";
+    if (saving) return "Submitting...";
     if (syncError) return syncError;
-    if (lastSavedScore !== null) return "Saved";
-    if (!Object.keys(answers).length) return "Answer questions, then submit";
-    return "Tap Submit to save";
+    if (lastSavedScore !== null) return "Submitted";
+    return "Not submitted yet";
   };
-
-  const canSubmit =
-    !!user?.id && !!materialId && Object.keys(answers).length > 0 && !saving;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -156,39 +165,33 @@ export default function QuizScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.quizContent}
       >
-        {quiz.map((q: any, idx: number) => {
-          const selected = answers[idx];
-          const statsForQ = perQuestionStats[String(idx)] || null;
+        {revisionQuiz.map((q: any, revIdx: number) => {
+          const originalIdx = revisionIndices[revIdx];
+          const selected = answers[originalIdx];
+          const statsForQ = perQuestionStats[String(originalIdx)] || null;
 
-          const needsRevision =
-            statsForQ &&
-            typeof statsForQ.attempts === "number" &&
-            typeof statsForQ.correct === "number" &&
-            statsForQ.correct === 0 &&
-            statsForQ.attempts >= 3;
+          const attempts = statsForQ?.attempts ?? 0;
+          const correct = statsForQ?.correct ?? 0;
+          const skipped = statsForQ?.skipped ?? 0;
 
           return (
-            <Card key={idx} style={styles.questionCard}>
+            <Card key={originalIdx} style={styles.questionCard}>
+              {/* Question header */}
               <View style={{ marginBottom: 10 }}>
-                <Text style={styles.questionNumber}>Q{idx + 1}</Text>
+                <Text style={styles.questionNumber}>
+                  Rev Q{revIdx + 1} (Original #{originalIdx + 1})
+                </Text>
                 <Text style={styles.questionText}>{q.question}</Text>
 
                 {statsForQ && (
-                  <Text
-                    style={[
-                      styles.revisionTag,
-                      needsRevision && styles.revisionTagHighlight,
-                    ]}
-                  >
-                    {needsRevision
-                      ? "Revision: you often miss this"
-                      : `Attempts: ${statsForQ.attempts ?? 0}, Correct: ${
-                          statsForQ.correct ?? 0
-                        }`}
+                  <Text style={styles.revisionTag}>
+                    Attempts: {attempts} · Correct: {correct} · Skipped:{" "}
+                    {skipped}
                   </Text>
                 )}
               </View>
 
+              {/* Options */}
               {q.options?.map((opt: string, i: number) => {
                 const hasSelected = !!selected;
                 const isSelected = selected === opt;
@@ -196,8 +199,8 @@ export default function QuizScreen() {
 
                 let bg = "#F3F4F6";
                 if (hasSelected) {
-                  if (isCorrect) bg = "#DCFCE7";
-                  else if (isSelected && !isCorrect) bg = "#FECACA";
+                  if (isCorrect) bg = "#DCFCE7"; // green
+                  else if (isSelected && !isCorrect) bg = "#FECACA"; // red
                 }
 
                 const optionLetter = String.fromCharCode(65 + i);
@@ -205,7 +208,7 @@ export default function QuizScreen() {
                 return (
                   <Pressable
                     key={i}
-                    onPress={() => selectOption(idx, opt)}
+                    onPress={() => selectOption(revIdx, opt)}
                     style={[styles.optionButton, { backgroundColor: bg }]}
                   >
                     <View style={styles.optionCircle}>
@@ -218,6 +221,7 @@ export default function QuizScreen() {
                 );
               })}
 
+              {/* Explanation */}
               {selected && (
                 <View style={styles.explanationBlock}>
                   <View style={styles.explanationDivider} />
@@ -230,7 +234,7 @@ export default function QuizScreen() {
         })}
       </ScrollView>
 
-      {/* Bottom bar */}
+      {/* Bottom bar with Submit */}
       <View style={styles.scoreBarWrapper}>
         <LinearGradient
           colors={["#2563EB", "#9333EA"]}
@@ -240,26 +244,27 @@ export default function QuizScreen() {
         >
           <View style={styles.scoreBarInner}>
             <View>
-              <Text style={styles.scoreLabel}>Score</Text>
+              <Text style={styles.scoreLabel}>Revision Score</Text>
               <Text style={styles.scoreValue}>
-                {score} / {quiz.length}
+                {score} / {revisionQuiz.length}
               </Text>
             </View>
 
-            <Text style={styles.syncStatusText}>{syncStatusLabel()}</Text>
-
-            <Pressable
-              onPress={submitQuiz}
-              disabled={!canSubmit}
-              style={[
-                styles.submitButton,
-                !canSubmit && { opacity: 0.6 },
-              ]}
-            >
-              <Text style={styles.submitButtonText}>
-                {saving ? "Saving..." : "Submit"}
-              </Text>
-            </Pressable>
+            <View style={styles.rightBlock}>
+              <Text style={styles.syncStatusText}>{syncStatusLabel()}</Text>
+              <Pressable
+                style={[
+                  styles.submitButton,
+                  saving && styles.submitButtonDisabled,
+                ]}
+                onPress={submitPerformance}
+                disabled={saving}
+              >
+                <Text style={styles.submitButtonText}>
+                  {saving ? "Submitting..." : "Submit"}
+                </Text>
+              </Pressable>
+            </View>
           </View>
         </LinearGradient>
       </View>
@@ -300,6 +305,7 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 120,
   },
+
   card: {
     backgroundColor: "white",
     padding: 16,
@@ -310,6 +316,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
+
   questionCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 20,
@@ -331,15 +338,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#111827",
   },
+
   revisionTag: {
     marginTop: 4,
     fontSize: 11,
     color: "#6B7280",
   },
-  revisionTagHighlight: {
-    color: "#B91C1C",
-    fontWeight: "600",
-  },
+
   optionButton: {
     borderRadius: 18,
     paddingVertical: 14,
@@ -368,6 +373,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: "#1F2937",
   },
+
   explanationBlock: {
     marginTop: 12,
   },
@@ -387,6 +393,7 @@ const styles = StyleSheet.create({
     color: "#4B5563",
     lineHeight: 18,
   },
+
   scoreBarWrapper: {
     position: "absolute",
     left: 0,
@@ -425,18 +432,24 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 15,
   },
+  rightBlock: {
+    alignItems: "flex-end",
+  },
   syncStatusText: {
     color: "white",
     fontSize: 11,
     textAlign: "right",
     maxWidth: 170,
+    marginBottom: 4,
   },
   submitButton: {
-    marginLeft: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.15)",
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  submitButtonDisabled: {
+    opacity: 0.6,
   },
   submitButtonText: {
     color: "white",

@@ -9,7 +9,7 @@ import {
   Pressable,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { useStudy, ASK_URL } from "./StudyContext";
+import { useStudy, ASK_URL } from "../StudyContext";
 
 function Card({ children }: { children: React.ReactNode }) {
   return <View style={styles.card}>{children}</View>;

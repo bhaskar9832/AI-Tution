@@ -6,7 +6,7 @@ import { Platform } from "react-native";
 export const BASE_URL = Platform.select({
   web: "http://127.0.0.1:8000", // browser
   // 🔁 replace with your machine IP on Wi-Fi (e.g. 192.168.1.2)
-  default: "http://10.41.105.182:8000", // device / simulator
+  default: "http://192.168.1.6:8000", // device / simulator
 });
 
 export const STUDY_URL = `${BASE_URL}/api/study_material`;
@@ -14,6 +14,12 @@ export const ASK_URL = `${BASE_URL}/api/ask_question`;
 export const RECOMMEND_URL = `${BASE_URL}/api/recommend_videos`;
 export const MINDMAP_URL = `${BASE_URL}/api/mindmap`;
 export const MOCK_TEST_URL = `${BASE_URL}/api/mock_test`;
+export const QUIZ_PERFORMANCE_URL = `${BASE_URL}/api/quiz_performance`;
+export const REVISION_QUIZ_URL = `${BASE_URL}/api/revision_quiz`;
+
+// 🔹 (Optional) if you want to keep dashboard API here as well:
+// export const QUIZ_DASHBOARD_URL = `${BASE_URL}/api/quiz_dashboard`;
+
 type FileInfo = {
   uri: string;
   name: string;
@@ -22,22 +28,71 @@ type FileInfo = {
   fileObject?: any;
 };
 
+// match what your backend actually returns
+type QuizQuestion = {
+  question: string;
+  options: string[];
+  answer: string;
+  explanation?: string;
+};
+
+type QuizStatsHistoryItem = {
+  score: number;
+  wrong: number;
+  correct: number;
+  skipped: number;
+  attempted: number;
+  total_questions: number;
+  attempt_no?: number;
+  created_at: string;
+};
+
+type PerQuestionStats = {
+  [index: string]: {
+    correct: number;
+    skipped: number;
+    attempts: number;
+  };
+};
+
+type LastUnsolvedItem = {
+  index: number;
+  question: string;
+  options: string[];
+  correct_answer: string;
+  selected_answer: string | null;
+};
+
+type QuizStats = {
+  history: QuizStatsHistoryItem[];
+  per_question: PerQuestionStats;
+  last_unsolved: LastUnsolvedItem[];
+};
+
+type RevisionQuestion = {
+  index: number;            // original quiz index
+  question: string;
+  options: string[];
+  correct_answer: string;
+  selected_answer: string | null;
+};
+
 type ApiData = {
   summary?: string;
   key_topics?: string[];
   key_points?: string[];
   flashcards?: { front: string; back: string }[];
-  quiz?: {
-    question: string;
-    options: string[];
-    answer: string;
-    explanation?: string;
-  }[];
+  quiz?: QuizQuestion[];
   text?: string;
+
+  // 👇 these three are what you’re already using in home.tsx / quiz screens
+  material_id?: string;
+  quiz_stats?: QuizStats;
+  revision_questions?: RevisionQuestion[];
 };
 
 type StudyContextType = {
-  user: any | null;                 // 👈 add this
+  user: any | null;
   setUser: (u: any | null) => void;
   fileInfo: FileInfo | null;
   setFileInfo: (f: FileInfo | null) => void;

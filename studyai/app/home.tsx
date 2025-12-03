@@ -1,5 +1,5 @@
-// app/index.tsx
-import React from "react";
+// app/home.tsx
+import React, { useEffect } from "react";
 import {
   SafeAreaView,
   View,
@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import { useRouter } from "expo-router";
-import { useStudy, STUDY_URL } from "./StudyContext";
+import { useStudy, STUDY_URL, REVISION_QUIZ_URL } from "../StudyContext";
 import {
   FileText as FileTextIcon,
   CreditCard,
@@ -24,9 +24,9 @@ import {
   Upload,
   X,
   ListChecks,
+  UserCircle,
 } from "lucide-react-native";
-
-/* ---------- same FeatureCard / FeatureList code as you already have ---------- */
+import { supabase } from "../lib/supabaseClient";
 
 type PropsWithChildren = {
   children: React.ReactNode;
@@ -48,6 +48,8 @@ const COLOR_MAP: Record<ColorKey, string> = {
 function Card({ children }: PropsWithChildren) {
   return <View style={styles.card}>{children}</View>;
 }
+
+/* ---------------- Feature cards ---------------- */
 
 interface FeatureCardProps {
   icon: IconType;
@@ -88,10 +90,12 @@ type FeatureKey =
   | "summary"
   | "flashcards"
   | "quiz"
+  | "revision-quiz"
   | "mindmap"
   | "questions"
   | "videos"
-  | "mock-test";
+  | "mock-test"
+  | "dashboard";
 
 interface FeatureConfig {
   icon: IconType;
@@ -124,6 +128,13 @@ const FEATURES: FeatureConfig[] = [
     key: "quiz",
   },
   {
+    icon: ListChecks,
+    title: "Revision Quiz",
+    description: "Questions you struggled with",
+    color: "orange",
+    key: "revision-quiz",
+  },
+  {
     icon: GitBranch,
     title: "Mind Map",
     description: "Visual tree of concepts",
@@ -151,42 +162,67 @@ const FEATURES: FeatureConfig[] = [
     color: "green",
     key: "mock-test",
   },
+  {
+    icon: ListChecks,
+    title: "Quiz Dashboard",
+    description: "Track your progress & stats",
+    color: "blue",
+    key: "dashboard",
+  },
 ];
 
 interface FeatureListProps {
   onNavigateToFlashcards: () => void;
   onNavigateToQuiz: () => void;
+  onNavigateToRevisionQuiz: () => void;
   onNavigateToVideos: () => void;
   onNavigateToQuestions: () => void;
   onNavigateToMindMap: () => void;
   onNavigateToSummary: () => void;
   onNavigateToMockTest: () => void;
+  onNavigateToDashboard: () => void;
 }
 
 const FeatureList: React.FC<FeatureListProps> = ({
   onNavigateToFlashcards,
   onNavigateToQuiz,
+  onNavigateToRevisionQuiz,
   onNavigateToVideos,
   onNavigateToQuestions,
   onNavigateToMindMap,
   onNavigateToSummary,
   onNavigateToMockTest,
+  onNavigateToDashboard,
 }) => {
   const handleFeaturePress = (key: FeatureKey) => {
-    if (key === "flashcards") {
-      onNavigateToFlashcards();
-    } else if (key === "quiz") {
-      onNavigateToQuiz();
-    } else if (key === "videos") {
-      onNavigateToVideos();
-    } else if (key === "questions") {
-      onNavigateToQuestions();
-    } else if (key === "mindmap") {
-      onNavigateToMindMap();
-    } else if (key === "summary") {
-      onNavigateToSummary();
-    } else if (key === "mock-test") {
-      onNavigateToMockTest();
+    switch (key) {
+      case "flashcards":
+        onNavigateToFlashcards();
+        break;
+      case "quiz":
+        onNavigateToQuiz();
+        break;
+      case "revision-quiz":
+        onNavigateToRevisionQuiz();
+        break;
+      case "videos":
+        onNavigateToVideos();
+        break;
+      case "questions":
+        onNavigateToQuestions();
+        break;
+      case "mindmap":
+        onNavigateToMindMap();
+        break;
+      case "summary":
+        onNavigateToSummary();
+        break;
+      case "mock-test":
+        onNavigateToMockTest();
+        break;
+      case "dashboard":
+        onNavigateToDashboard();
+        break;
     }
   };
 
@@ -209,9 +245,13 @@ const FeatureList: React.FC<FeatureListProps> = ({
   );
 };
 
+/* ---------------- HomeScreen ---------------- */
+
 export default function HomeScreen() {
   const router = useRouter();
   const {
+    user,
+    setUser,
     fileInfo,
     setFileInfo,
     uploading,
@@ -221,6 +261,31 @@ export default function HomeScreen() {
     setVideoResults,
     setVideoError,
   } = useStudy();
+
+  // Load Supabase user into context
+  useEffect(() => {
+    let isMounted = true;
+
+    supabase.auth
+      .getUser()
+      .then(({ data, error }) => {
+        if (error) {
+          console.log("supabase.auth.getUser error:", error.message);
+          return;
+        }
+        if (isMounted) {
+          setUser(data.user);
+          console.log("Current user:", data.user?.id, data.user?.email);
+        }
+      })
+      .catch((err) => {
+        console.log("getUser exception:", err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [setUser]);
 
   const onRemoveFile = () => {
     setFileInfo(null);
@@ -270,6 +335,13 @@ export default function HomeScreen() {
       return;
     }
 
+    if (!user?.id) {
+      Alert.alert(
+        "Not logged in",
+        "We couldn't find your account. Please log in again."
+      );
+    }
+
     setUploading(true);
 
     try {
@@ -287,6 +359,13 @@ export default function HomeScreen() {
       formData.append("num_questions", String(10));
       formData.append("difficulty", "medium");
       formData.append("model", "gemini-2.5-flash");
+
+      if (user?.id) {
+        formData.append("user_id", user.id);
+        console.log("Sending user_id with upload:", user.id);
+      } else {
+        console.log("⚠️ No user in context; user_id will not be sent.");
+      }
 
       if (Platform.OS === "web") {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -344,7 +423,67 @@ export default function HomeScreen() {
     }
   };
 
-  const hasData = !!apiData;
+  // 🔹 Load revision questions from backend then navigate
+  const loadRevisionQuiz = async () => {
+    if (!user?.id) {
+      Alert.alert("Not logged in", "Please log in to use Revision Quiz.");
+      return;
+    }
+    if (!apiData) {
+      Alert.alert("No study material", "Upload a PDF and generate a quiz first.");
+      return;
+    }
+
+    const materialId = (apiData as any).material_id;
+    if (!materialId) {
+      Alert.alert(
+        "Missing material",
+        "We couldn't find the study material id. Try re-uploading the PDF."
+      );
+      return;
+    }
+
+    try {
+      const resp = await fetch(REVISION_QUIZ_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: user.id,
+          material_id: materialId,
+          limit: 10,
+        }),
+      });
+
+      const json = await resp.json();
+
+      if (!resp.ok || json.error) {
+        console.log("revision_quiz error:", resp.status, json);
+        Alert.alert("Error", json.error || "Could not load revision quiz.");
+        return;
+      }
+
+      const revisionQuestions = json.revision_questions || [];
+      if (!revisionQuestions.length) {
+        Alert.alert(
+          "Nothing to revise",
+          "You either answered everything correctly or have not taken the quiz yet."
+        );
+        return;
+      }
+
+      // Store revision info in context so RevisionQuiz screen can use it
+      setApiData({
+        ...(apiData as any),
+        revision_questions: revisionQuestions,
+        quiz_stats: json.stats ?? (apiData as any).quiz_stats,
+      });
+
+      router.push("/revision-quiz");
+    } catch (err: any) {
+      console.log("revision_quiz request error:", err);
+      Alert.alert("Error", "Failed to load revision questions.");
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -352,6 +491,24 @@ export default function HomeScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
       >
+        {/* Top bar */}
+        <View style={styles.topBar}>
+          <View>
+            <Text style={styles.appTitle}>StudyAI</Text>
+            {user?.email ? (
+              <Text style={styles.userEmail}>Logged in as {user.email}</Text>
+            ) : null}
+          </View>
+
+          <TouchableOpacity
+            style={styles.profileButton}
+            onPress={() => router.push("/profile")}
+            activeOpacity={0.8}
+          >
+            <UserCircle size={22} color="#111827" />
+          </TouchableOpacity>
+        </View>
+
         <Card>
           {!fileInfo && (
             <>
@@ -434,27 +591,43 @@ export default function HomeScreen() {
               </>
             ) : (
               <Text style={styles.generateButtonText}>
-                {hasData ? "Re-generate from PDF" : "Upload & Generate"}
+                {apiData ? "Re-generate from PDF" : "Upload & Generate"}
               </Text>
             )}
           </TouchableOpacity>
         </Card>
 
-        {hasData && (
+        <View style={styles.spacer8} />
+
+        {/* Global user dashboard button */}
+        <TouchableOpacity
+          style={styles.dashboardButton}
+          onPress={() => router.push("/user-dashboard")}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.dashboardButtonText}>
+            View Your Quiz Dashboard
+          </Text>
+        </TouchableOpacity>
+
+        {apiData && (
           <FeatureList
             onNavigateToSummary={() => router.push("/summary")}
             onNavigateToFlashcards={() => router.push("/flashcards")}
             onNavigateToQuiz={() => router.push("/quiz")}
+            onNavigateToRevisionQuiz={loadRevisionQuiz}
             onNavigateToVideos={() => router.push("/videos")}
             onNavigateToQuestions={() => router.push("/ask")}
             onNavigateToMindMap={() => router.push("/mindmap")}
             onNavigateToMockTest={() => router.push("/mock-test")}
+            onNavigateToDashboard={() => router.push("/dashboard")}
           />
         )}
       </ScrollView>
     </SafeAreaView>
   );
 }
+
 /* ---------------------------------------------------
  * Styles
  * --------------------------------------------------*/
@@ -471,6 +644,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 32,
     paddingTop: 16,
+  },
+  topBar: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  appTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  userEmail: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginTop: 2,
+  },
+  profileButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 999,
+    backgroundColor: "#E5E7EB",
+    alignItems: "center",
+    justifyContent: "center",
   },
   card: {
     backgroundColor: "white",
@@ -623,5 +821,19 @@ const styles = StyleSheet.create({
     fontSize: 22,
     color: "#9CA3AF",
     marginLeft: 6,
+  },
+  dashboardButton: {
+    backgroundColor: "#111827",
+    paddingVertical: 12,
+    borderRadius: 24,
+    marginTop: 12,
+    alignSelf: "center",
+    width: "90%",
+    alignItems: "center",
+  },
+  dashboardButtonText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });

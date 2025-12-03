@@ -1,6 +1,6 @@
 import React from "react";
 import { SafeAreaView, ScrollView, View, Text } from "react-native";
-import { useStudy } from "./StudyContext";
+import { useStudy } from "../StudyContext";
 
 function Card({ children }: { children: React.ReactNode }) {
   return (

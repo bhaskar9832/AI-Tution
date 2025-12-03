@@ -12,7 +12,7 @@ import {
   Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { useStudy, MOCK_TEST_URL } from "./StudyContext";
+import { useStudy, MOCK_TEST_URL } from "../StudyContext";
 
 type PatternRow = {
   marks: number;

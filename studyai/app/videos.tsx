@@ -9,7 +9,7 @@ import {
   Pressable,
   Linking,
 } from "react-native";
-import { useStudy, RECOMMEND_URL } from "./StudyContext";
+import { useStudy, RECOMMEND_URL } from "../StudyContext";
 
 function Card({ children }: { children: React.ReactNode }) {
   return (

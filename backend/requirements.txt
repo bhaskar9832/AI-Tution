@@ -1,0 +1,10 @@
+flask
+flask-cors
+python-dotenv
+pymupdf
+pillow
+pytesseract
+google-genai
+requests
+graphviz
+supabase

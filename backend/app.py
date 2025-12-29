@@ -1443,64 +1443,79 @@ def dashboard_overview(user_id):
     try:
         qp_resp = (
             supabase.table("quiz_performance")
-            .select("material_id, accuracy, created_at")
+            .select("material_id, correct_answers, wrong_answers, created_at")
             .eq("user_id", user_id)
             .execute()
         )
-        qp_rows = getattr(qp_resp, "data", qp_resp) or []
-        if not qp_rows:
+
+        rows = qp_resp.data or []
+        if not rows:
             return jsonify({"materials": [], "global_stats": {}})
 
-        materials_summary: Dict[str, Dict[str, Any]] = {}
-        for row in qp_rows:
+        materials_summary = {}
+
+        total_correct = 0
+        total_attempted = 0
+
+        for row in rows:
             m_id = row["material_id"]
+
+            correct = int(row.get("correct_answers") or 0)
+            wrong = int(row.get("wrong_answers") or 0)
+            attempted = correct + wrong
+
+            total_correct += correct
+            total_attempted += attempted
+
             if m_id not in materials_summary:
                 materials_summary[m_id] = {
                     "material_id": m_id,
                     "total_attempts": 0,
-                    "accuracies": [],
+                    "correct": 0,
+                    "attempted": 0,
                     "last_attempt_at": row.get("created_at"),
                 }
+
             m = materials_summary[m_id]
             m["total_attempts"] += 1
-            m["accuracies"].append(float(row.get("accuracy", 0)))
-            if row.get("created_at") and (
-                m["last_attempt_at"] is None
-                or row["created_at"] > m["last_attempt_at"]
-            ):
+            m["correct"] += correct
+            m["attempted"] += attempted
+
+            if row.get("created_at") and row["created_at"] > m["last_attempt_at"]:
                 m["last_attempt_at"] = row["created_at"]
 
-        materials: List[Dict[str, Any]] = []
-        all_accuracies: List[float] = []
+        # ---------- per material accuracy ----------
+        materials = []
         for m in materials_summary.values():
-            if m["accuracies"]:
-                avg_acc = sum(m["accuracies"]) / len(m["accuracies"])
-            else:
-                avg_acc = 0.0
-            materials.append(
-                {
-                    "material_id": m["material_id"],
-                    "total_attempts": m["total_attempts"],
-                    "avg_accuracy": round(avg_acc * 100, 2),
-                    "last_attempt_at": m["last_attempt_at"],
-                }
-            )
-            all_accuracies.append(avg_acc)
+            acc = (m["correct"] / m["attempted"] * 100) if m["attempted"] > 0 else 0
+            materials.append({
+                "material_id": m["material_id"],
+                "total_attempts": m["total_attempts"],
+                "avg_accuracy": round(acc, 2),
+                "last_attempt_at": m["last_attempt_at"],
+            })
 
-        if all_accuracies:
-            global_avg = sum(all_accuracies) / len(all_accuracies)
-        else:
-            global_avg = 0.0
+        # ---------- GLOBAL accuracy ----------
+        global_accuracy = (
+            (total_correct / total_attempted) * 100
+            if total_attempted > 0
+            else 0
+        )
 
         global_stats = {
-            "total_materials": len(materials),
-            "total_attempts": len(qp_rows),
-            "avg_accuracy": round(global_avg * 100, 2),
+            "total_materials": len(materials_summary),
+            "total_attempts": len(rows),
+            "avg_accuracy": round(global_accuracy, 2),
         }
 
-        return jsonify({"materials": materials, "global_stats": global_stats})
+        return jsonify({
+            "materials": materials,
+            "global_stats": global_stats
+        })
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 @app.route("/api/dashboard/material/<material_id>/<user_id>", methods=["GET"])
@@ -1575,19 +1590,30 @@ def user_dashboard(user_id):
 
     try:
         qp = (
-            supabase.table("quiz_performance")
-            .select(
-                "material_id, created_at, attempt_no, "
-                "correct_answers, wrong_answers, skipped"
-            )
-            .eq("user_id", user_id)
-            .order("created_at", desc=False)
-            .execute()
+    supabase.table("quiz_performance")
+    .select(
+        """
+        material_id,
+        created_at,
+        attempt_no,
+        correct_answers,
+        wrong_answers,
+        skipped,
+        study_materials!quiz_performance_material_id_fkey (
+            source_name
         )
+        """
+    )
+    .eq("user_id", user_id)
+    .order("created_at", desc=False)
+    .execute()
+)
+
+         
     except Exception as e:
         print("user_dashboard supabase error:", e)
         return jsonify({"error": "Database error"}), 500
-
+    print("Quiz performance response:", qp)
     rows = getattr(qp, "data", []) or []
     if not rows:
         # empty skeleton response
@@ -1622,7 +1648,10 @@ def user_dashboard(user_id):
     for row in rows:
         mid = row["material_id"]
         material_ids.add(mid)
-
+        material_name = None
+        sm = row.get("study_materials")
+        if isinstance(sm, dict):
+          material_name = sm.get("source_name")[:15]
         correct = int(row.get("correct_answers") or 0)
         wrong = int(row.get("wrong_answers") or 0)
         skipped = int(row.get("skipped") or 0)
@@ -1657,11 +1686,13 @@ def user_dashboard(user_id):
         d["attempts"] += 1
         d["sum_accuracy_frac"] += accuracy_frac
         d["sum_score"] += score
+        print("Row material:", row.get("study_materials"))
 
         attempts_out.append(
             {
                 "attempt_no": int(row.get("attempt_no") or 0),
                 "material_id": mid,
+                "material_name": material_name or "Untitled Material",
                 "created_at": created_at,
                 "score": score,
                 "total_questions": total_q,
